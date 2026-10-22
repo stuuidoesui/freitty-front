@@ -31,9 +31,12 @@ In Pipeline view a client may drag **Draft → Ready** only. Other drops are ign
 
 ## Deploy (Vercel)
 
-- Root: this repo
-- Env: `VITE_API_URL` = Render API origin, e.g. `https://freitty-api.onrender.com`
-- `vercel.json` rewrites all routes to `index.html` (SPA)
+1. Push this repo to GitHub (`gh repo create freitty-frontend --private --source=. --remote=origin --push`).
+2. Import it on vercel.com.
+3. Set `VITE_API_URL` to the Render API origin (no trailing slash), e.g. `https://freitty-api.onrender.com`.
+4. `vercel.json` rewrites all routes to `index.html` (SPA).
+
+Backend lives in a sibling repo: `~/Projects/freitty-backend`. Full steps: that repo’s `DEPLOY.md`.
 
 ## Presentation notes
 
