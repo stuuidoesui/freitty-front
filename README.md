@@ -8,7 +8,7 @@ Client cabinet for the Freitty logistics platform. Three screens from the assign
 
 ## Stack
 
-React 19, Vite, TypeScript, Tailwind CSS 4, TanStack Query, React Router, Recharts, dnd-kit.
+React 19, Vite, TypeScript, Tailwind CSS 4, TanStack Query, React Router, Recharts.
 
 All data comes from the NestJS API (`VITE_API_URL`). Nothing is hardcoded on the client except demo-scope placeholders (New Order / Settings / Top up).
 
@@ -24,10 +24,6 @@ npm run dev
 App: http://localhost:5173
 
 The API must be running (see `freitty-backend`).
-
-## Pipeline rule
-
-In Pipeline view a client may drag **Draft → Ready** only. Other drops are ignored; the API also returns `403`.
 
 ## Deploy (Vercel)
 

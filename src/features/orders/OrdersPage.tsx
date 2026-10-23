@@ -1,243 +1,257 @@
-import { useQuery } from '@tanstack/react-query';
-import { useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../../api/client';
-import type { DateRange, OrderStatus, OrderTab } from '../../api/types';
-import { OrderCard } from '../../components/OrderCard';
-import { EmptyState, ErrorState } from '../../components/ui/EmptyState';
-import { PageSkeleton } from '../../components/ui/Skeleton';
-import { formatWhen, typeLabel } from '../../lib/format';
-import { OrdersPipeline } from './OrdersPipeline';
+import { useMemo, useState } from 'react';
+import { Columns3, Download, LayoutGrid, List } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import type { OrderListItem } from '@/shared/api/types';
+import { cn } from '@/shared/lib/cn';
+import { formatWhen } from '@/shared/lib/format';
+import { Breadcrumbs } from '@/shared/ui/Breadcrumbs';
+import { Button } from '@/shared/ui/Button';
+import { EmptyState, ErrorState } from '@/shared/ui/EmptyState';
+import { OrderCard } from '@/entities/order/ui/OrderCard';
+import { PageSkeleton } from '@/shared/ui/Skeleton';
+import { Select } from '@/shared/ui/Select';
+import { SegmentedControl } from '@/shared/ui/SegmentedControl';
+import { DataTable } from '@/shared/ui/Table';
+import { Tabs } from '@/shared/ui/Tabs';
+import {
+  DATE_RANGES,
+  FILTER_STATUSES,
+  HUBS,
+  parseOrderFilters,
+  patchFilters,
+  type OrderView,
+} from '@/entities/order/lib/filters';
+import { STATUS_LABEL, typeLabel } from '@/entities/order/lib/labels';
+import { useOrderCounts, useOrders } from '@/entities/order/api/queries';
+import { OrdersPipeline } from './components/OrdersPipeline';
 
-type View = 'cards' | 'table' | 'pipeline';
-
-const TABS: { id: OrderTab; label: string; key: keyof Awaited<ReturnType<typeof api.counts>> }[] = [
-  { id: 'all', label: 'All', key: 'all' },
-  { id: 'cross-dock', label: 'Cross-Dock', key: 'crossDock' },
-  { id: 'consolidation', label: 'Consolidation', key: 'consolidation' },
-  { id: 'alerts', label: 'Alerts', key: 'alerts' },
-  { id: 'drafts', label: 'Drafts', key: 'drafts' },
+const TAB_ITEMS = [
+  { id: 'all' as const, label: 'All', key: 'all' as const },
+  { id: 'cross-dock' as const, label: 'Cross-Dock', key: 'crossDock' as const },
+  { id: 'consolidation' as const, label: 'Consolidation', key: 'consolidation' as const },
+  { id: 'alerts' as const, label: 'Alerts', key: 'alerts' as const, tone: 'danger' as const },
+  { id: 'drafts' as const, label: 'Drafts', key: 'drafts' as const },
 ];
 
-export function OrdersPage() {
+const DATE_LABEL: Record<(typeof DATE_RANGES)[number], string> = {
+  all: 'Date: All',
+  'last-30': 'Last 30 days',
+  today: 'Today',
+  'this-week': 'This week',
+};
+
+export const OrdersPage = () => {
   const [params, setParams] = useSearchParams();
-  const tab = (params.get('tab') as OrderTab) || 'all';
-  const hub = params.get('hub') || 'all';
-  const status = (params.get('status') as OrderStatus) || '';
-  const dateRange = (params.get('dateRange') as DateRange) || 'all';
-  const search = params.get('search') || '';
-  const page = Number(params.get('page') || '1');
-  const view = (params.get('view') as View) || 'cards';
+  const navigate = useNavigate();
+  const filters = useMemo(() => parseOrderFilters(params), [params]);
+  const list = useOrders(filters);
+  const counts = useOrderCounts();
+  const [openOrderNumber, setOpenOrderNumber] = useState<string | null>(null);
 
-  const query = useMemo(
-    () => ({
-      tab,
-      hub,
-      status,
-      dateRange,
-      search,
-      page,
-      limit: view === 'pipeline' ? 100 : 12,
-    }),
-    [tab, hub, status, dateRange, search, page, view],
-  );
+  const toggleOrder = (number: string) => {
+    setOpenOrderNumber((current) => (current === number ? null : number));
+  };
 
-  const list = useQuery({
-    queryKey: ['orders', query],
-    queryFn: () => api.orders(query),
-  });
-  const counts = useQuery({ queryKey: ['order-counts'], queryFn: api.counts });
-
-  function set(next: Record<string, string>) {
-    const n = new URLSearchParams(params);
-    Object.entries(next).forEach(([k, v]) => {
-      if (!v || v === 'all') n.delete(k);
-      else n.set(k, v);
-    });
-    if (!next.page) n.delete('page');
-    setParams(n);
-  }
-
-  const exportHref = api.exportUrl({
-    ...(tab !== 'all' ? { tab } : {}),
-    ...(hub !== 'all' ? { hub } : {}),
-    ...(status ? { status } : {}),
-    ...(dateRange !== 'all' ? { dateRange } : {}),
-    ...(search ? { search } : {}),
-  });
+  const update = (patch: Parameters<typeof patchFilters>[1]) => {
+    setParams(patchFilters(params, patch));
+  };
 
   return (
     <div>
-      <div className="mb-2 text-xs text-muted">
-        Home <span className="text-link">›</span> Orders
-      </div>
+      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Orders' }]} />
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <h1 className="text-[22px] font-bold text-navy">All Orders</h1>
         <div className="ml-auto flex gap-2">
-          <a
-            href={exportHref}
-            className="rounded-md border border-link px-4 py-2 text-[13px] font-semibold text-navy-deep"
-          >
-            📥 Export CSV
-          </a>
+          <Button variant="outline" size="md">
+            <Download className="size-3.5" aria-hidden="true" /> Export CSV
+          </Button>
+          <Button variant="primary" size="md">
+            + New Order
+          </Button>
         </div>
       </div>
 
-      <div className="mb-4 flex gap-1 overflow-x-auto border-b border-line">
-        {TABS.map((t) => {
-          const count = counts.data?.[t.key] ?? '—';
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => set({ tab: t.id })}
-              className={`-mb-px px-4 py-2.5 text-[13px] font-semibold ${
-                active
-                  ? 'border-b-2 border-brand text-navy-deep'
-                  : 'border-b-2 border-transparent text-muted'
-              }`}
-            >
-              {t.label}{' '}
-              <span
-                className={`ml-1 rounded-full px-1.5 py-0.5 text-[10px] ${
-                  t.id === 'alerts' ? 'bg-red-100 text-red-800' : 'bg-gray-200 text-gray-700'
-                }`}
-              >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      <Tabs
+        label="Order categories"
+        value={filters.tab}
+        onChange={(tab) => update({ tab })}
+        tabs={TAB_ITEMS.map((tab) => ({
+          id: tab.id,
+          label: tab.label,
+          count: counts.data?.[tab.key] ?? '—',
+          tone: 'tone' in tab ? tab.tone : undefined,
+        }))}
+      />
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <select
-          value={hub}
-          onChange={(e) => set({ hub: e.target.value })}
-          className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs"
+        <Select
+          label="Hub"
+          value={filters.hub}
+          onChange={(event) => update({ hub: event.target.value })}
         >
-          <option value="all">Hub: All</option>
-          <option value="Markham">Markham</option>
-          <option value="Toronto">Toronto</option>
-        </select>
-        <select
-          value={dateRange}
-          onChange={(e) => set({ dateRange: e.target.value })}
-          className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs"
+          {HUBS.map((hub) => (
+            <option key={hub} value={hub}>
+              {hub === 'all' ? 'Hub: All' : hub}
+            </option>
+          ))}
+        </Select>
+        <Select
+          label="Date range"
+          value={filters.dateRange}
+          onChange={(event) => update({ dateRange: event.target.value })}
         >
-          <option value="all">Date: All</option>
-          <option value="last-30">Last 30 days</option>
-          <option value="today">Today</option>
-          <option value="this-week">This week</option>
-        </select>
-        <select
-          value={status}
-          onChange={(e) => set({ status: e.target.value })}
-          className="rounded-md border border-gray-300 px-2.5 py-1.5 text-xs"
+          {DATE_RANGES.map((range) => (
+            <option key={range} value={range}>
+              {DATE_LABEL[range]}
+            </option>
+          ))}
+        </Select>
+        <Select
+          label="Status"
+          value={filters.status}
+          onChange={(event) => update({ status: event.target.value })}
         >
           <option value="">Status: Any</option>
-          <option value="NEW">New</option>
-          <option value="READY">Ready</option>
-          <option value="IN_PROGRESS">In progress</option>
-          <option value="DRAFT">Draft</option>
-          <option value="COMPLETED">Completed</option>
-          <option value="CLOSED">Closed</option>
-        </select>
-        <div className="ml-auto flex rounded-md bg-gray-100 p-0.5">
-          {(['cards', 'table', 'pipeline'] as View[]).map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => set({ view: v })}
-              className={`rounded px-2.5 py-1 text-xs font-semibold capitalize ${
-                view === v ? 'bg-white text-navy' : 'text-muted'
-              }`}
-            >
-              {v === 'cards' ? '⊞ Cards' : v === 'table' ? '☰ Table' : '⎔ Pipeline'}
-            </button>
+          {FILTER_STATUSES.map((status) => (
+            <option key={status} value={status}>
+              {STATUS_LABEL[status]}
+            </option>
           ))}
+        </Select>
+        <div className="ml-auto">
+          <SegmentedControl<OrderView>
+            label="Order view"
+            value={filters.view}
+            onChange={(view) => update({ view })}
+            options={[
+              {
+                id: 'cards',
+                label: (
+                  <>
+                    <LayoutGrid className="size-3.5" aria-hidden="true" /> Cards
+                  </>
+                ),
+              },
+              {
+                id: 'table',
+                label: (
+                  <>
+                    <List className="size-3.5" aria-hidden="true" /> Table
+                  </>
+                ),
+              },
+              {
+                id: 'pipeline',
+                label: (
+                  <>
+                    <Columns3 className="size-3.5" aria-hidden="true" /> Pipeline
+                  </>
+                ),
+              },
+            ]}
+          />
         </div>
       </div>
 
-      {list.isLoading ? <PageSkeleton /> : null}
+      {filters.view !== 'pipeline' ? (
+        <div className="mb-3.5 rounded-md border border-violet-200 border-l-[3px] border-l-violet-800 bg-violet-50 px-3.5 py-2.5 text-[11.5px] leading-[1.55] text-violet-900">
+          <strong className="inline-flex items-center gap-1">
+            <Columns3 className="size-3.5" aria-hidden="true" /> Pipeline view:
+          </strong>{' '}
+          замість лінійного списку — 7 колонок kanban (Draft · Ready · In Progress · Consolidated ·
+          In Transit · Deconsolidated · Closed). Фільтр chip-ами над колонками.
+        </div>
+      ) : null}
+
+      {list.isPending ? <PageSkeleton /> : null}
       {list.isError ? (
         <ErrorState message={list.error.message} onRetry={() => void list.refetch()} />
       ) : null}
       {list.data && list.data.items.length === 0 ? (
-        <EmptyState title="No orders match these filters" hint="Clear filters or try another tab." />
+        <EmptyState
+          title="No orders match these filters"
+          hint="Clear a filter or try another tab."
+        />
       ) : null}
 
-      {list.data && list.data.items.length > 0 && view === 'cards' ? (
-        <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3">
-          {list.data.items.map((o) => (
-            <OrderCard key={o.number} order={o} compact />
-          ))}
-        </div>
-      ) : null}
-
-      {list.data && list.data.items.length > 0 && view === 'table' ? (
-        <div className="overflow-x-auto rounded-[10px] border border-line bg-white">
-          <table className="w-full text-left text-[13px]">
-            <thead className="bg-gray-50 text-[11px] tracking-wide text-muted uppercase">
-              <tr>
-                <th className="px-3 py-2">Order</th>
-                <th className="px-3 py-2">Type</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Hub</th>
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Carrier</th>
-                <th className="px-3 py-2">Q-ty</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.data.items.map((o) => (
-                <tr key={o.number} className="border-t border-gray-100">
-                  <td className="px-3 py-2 font-bold text-navy-deep">
-                    <Link to={`/orders/${o.number}`}>{o.number}</Link>
-                  </td>
-                  <td className="px-3 py-2">{typeLabel(o.type)}</td>
-                  <td className="px-3 py-2">{o.statusLabel}</td>
-                  <td className="px-3 py-2">{o.hub.name}</td>
-                  <td className="px-3 py-2">{formatWhen(o.scheduledAt, false)}</td>
-                  <td className="px-3 py-2">{o.carrier ?? '—'}</td>
-                  <td className="px-3 py-2">{o.qtyLabel ?? '—'}</td>
-                </tr>
+      {list.data && list.data.items.length > 0 ? (
+        <div className={cn(list.isPlaceholderData && 'opacity-60')}>
+          {filters.view === 'cards' ? (
+            <div className="grid grid-cols-1 gap-3.5 md:grid-cols-3">
+              {list.data.items.map((order) => (
+                <OrderCard
+                  key={order.number}
+                  order={order}
+                  compact
+                  open={openOrderNumber === order.number}
+                  onToggle={toggleOrder}
+                />
               ))}
-            </tbody>
-          </table>
+            </div>
+          ) : null}
+
+          {filters.view === 'table' ? (
+            <div className="rounded-card border border-line bg-white">
+              <DataTable
+                columns={orderColumns}
+                rows={list.data.items}
+                rowKey={(order) => order.number}
+                rowLabel={(order) => `Open order ${order.number}`}
+                onRow={(order) => navigate(`/orders/${order.number}`)}
+              />
+            </div>
+          ) : null}
+
+          {filters.view === 'pipeline' ? (
+            <OrdersPipeline
+              items={list.data.items}
+              hiddenCount={Math.max(list.data.total - list.data.items.length, 0)}
+            />
+          ) : null}
         </div>
       ) : null}
 
-      {list.data && view === 'pipeline' ? (
-        <OrdersPipeline items={list.data.items} />
-      ) : null}
-
-      {list.data && view !== 'pipeline' ? (
+      {list.data && filters.view !== 'pipeline' ? (
         <div className="mt-5 flex items-center justify-between text-xs text-muted">
           <div>
             Showing {list.data.items.length} of {list.data.total}
           </div>
           <div className="flex gap-1">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => set({ page: String(page - 1) })}
-              className="rounded-md border border-link px-2.5 py-1 font-semibold text-navy-deep disabled:opacity-40"
+            <Button
+              disabled={filters.page <= 1}
+              onClick={() => update({ page: String(filters.page - 1) })}
             >
               ← Prev
-            </button>
-            <button
-              type="button"
-              disabled={page >= list.data.pages}
-              onClick={() => set({ page: String(page + 1) })}
-              className="rounded-md border border-link px-2.5 py-1 font-semibold text-navy-deep disabled:opacity-40"
+            </Button>
+            <Button
+              disabled={filters.page >= list.data.pages}
+              onClick={() => update({ page: String(filters.page + 1) })}
             >
               Next →
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
     </div>
   );
-}
+};
+
+const orderColumns = [
+  {
+    id: 'number',
+    header: 'Order',
+    cell: (order: OrderListItem) => (
+      <span className="font-bold text-navy-deep">{order.number}</span>
+    ),
+  },
+  { id: 'type', header: 'Type', cell: (order: OrderListItem) => typeLabel(order.type) },
+  { id: 'status', header: 'Status', cell: (order: OrderListItem) => order.statusLabel },
+  { id: 'hub', header: 'Hub', cell: (order: OrderListItem) => order.hub.name },
+  {
+    id: 'date',
+    header: 'Date',
+    cell: (order: OrderListItem) => formatWhen(order.scheduledAt, false),
+  },
+  { id: 'carrier', header: 'Carrier', cell: (order: OrderListItem) => order.carrier ?? '—' },
+  { id: 'qty', header: 'Q-ty', cell: (order: OrderListItem) => order.qtyLabel ?? '—' },
+];
